@@ -4,8 +4,9 @@ import '../utils/pathfinder.dart';
 
 /// AI controller for the Seeker role.
 ///
-/// Uses modified A* (respecting the no-repeat rule) to navigate toward the
-/// hider.  If no path exists the seeker is trapped → Hider wins.
+/// The AI has NO knowledge of the hider's position — it performs a
+/// systematic grid exploration (nearest-unvisited BFS) to find the hider.
+/// If every reachable tile has been visited the seeker is trapped → Hider wins.
 class SeekerAI {
   final GridManager grid;
 
@@ -13,35 +14,27 @@ class SeekerAI {
 
   double _elapsed = 0;
 
-  /// Delay between AI moves so the player can watch the trail form.
+  /// Delay between AI moves so the player can watch the trail build.
   static const double movePeriod = 0.72; // seconds
 
   /// Call every tick during the seeking phase.
-  /// [seekerPos] current seeker position.
-  /// [hiderPos]  known hider position (used for A* goal).
-  /// [visited]   tiles already visited by the seeker.
   ///
-  /// Returns the [AxialCoord] to move to, or null if it's not yet time
-  /// or there are no valid moves.
-  AxialCoord? update(
-    double dt,
-    AxialCoord seekerPos,
-    AxialCoord hiderPos,
-    Set<AxialCoord> visited,
-  ) {
+  /// Returns the next [AxialCoord] the AI wants to move to, or null when
+  /// it is not yet time to move.  Returns null permanently once trapped.
+  AxialCoord? update(double dt, AxialCoord seekerPos, Set<AxialCoord> visited) {
     _elapsed += dt;
     if (_elapsed < movePeriod) return null;
     _elapsed = 0;
 
-    return HexPathfinder.bestSeekerMove(
+    // Blind exploration: find the nearest unvisited reachable tile.
+    return HexPathfinder.nextExplorationStep(
       from: seekerPos,
-      target: hiderPos,
-      grid: grid,
       visited: visited,
+      grid: grid,
     );
   }
 
-  /// Returns true when the seeker has no moves remaining (hider wins).
+  /// True when the seeker has no valid moves remaining → hider wins.
   bool isTrapped(AxialCoord seekerPos, Set<AxialCoord> visited) =>
       grid.validMoves(seekerPos, visited: visited).isEmpty;
 

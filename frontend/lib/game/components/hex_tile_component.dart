@@ -13,6 +13,9 @@ class HexTileComponent extends PositionComponent with TapCallbacks {
   final AxialCoord coord;
   TileState state;
   bool isHighlighted; // hover / valid-move highlight
+  int highlightHeat; // 0=far, 1=warm, 2=hot, 3=adjacent
+  bool isSonarPinged;
+  bool isDecoyScanned;
   final void Function(AxialCoord)? onTapped;
 
   static const Color _colUnvisited = Color(0xFF1E2244);
@@ -27,6 +30,9 @@ class HexTileComponent extends PositionComponent with TapCallbacks {
     required double hexRadius,
     this.state = TileState.unvisited,
     this.isHighlighted = false,
+    this.highlightHeat = 0,
+    this.isSonarPinged = false,
+    this.isDecoyScanned = false,
     this.onTapped,
   }) : super(size: Vector2(hexRadius * 2, sqrt(3) * hexRadius));
 
@@ -42,7 +48,19 @@ class HexTileComponent extends PositionComponent with TapCallbacks {
     } else if (state == TileState.occupied) {
       fill = _colOccupied;
     } else {
-      fill = isHighlighted ? _colHighlight : _colUnvisited;
+      if (isHighlighted) {
+        if (highlightHeat >= 3) {
+          fill = const Color(0xFFFFAA99); // adjacent (bright peach/red)
+        } else if (highlightHeat == 2) {
+          fill = const Color(0xFFC4718D); // 2 steps (warm purple/orange)
+        } else if (highlightHeat == 1) {
+          fill = const Color(0xFF8152A3); // 3 steps (warm blue)
+        } else {
+          fill = _colHighlight;
+        }
+      } else {
+        fill = _colUnvisited;
+      }
     }
 
     canvas.drawPath(path, Paint()..color = fill);
@@ -53,6 +71,22 @@ class HexTileComponent extends PositionComponent with TapCallbacks {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.2,
     );
+
+    if (isSonarPinged) {
+      canvas.drawPath(
+        path,
+        Paint()..color = const Color(0xFF00FFC8).withValues(alpha: 0.35),
+      );
+    }
+
+    if (isDecoyScanned) {
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = const Color(0xFFFF2244).withValues(alpha: 0.45)
+          ..style = PaintingStyle.fill,
+      );
+    }
   }
 
   /// Flat-top hex path centred inside its bounding box.

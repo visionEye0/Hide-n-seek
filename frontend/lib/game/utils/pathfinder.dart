@@ -96,6 +96,45 @@ class HexPathfinder {
     return moves.first;
   }
 
+  /// Blind-exploration step: returns the next tile the seeker should move to
+  /// in order to reach the nearest currently reachable unvisited tile.
+  ///
+  /// Uses BFS (which naturally respects walls + the no-repeat [visited] rule)
+  /// and traces back the path to give just the first step.
+  /// Returns null if no reachable unvisited tile exists (seeker is trapped).
+  static AxialCoord? nextExplorationStep({
+    required AxialCoord from,
+    required Set<AxialCoord> visited,
+    required GridManager grid,
+  }) {
+    // prev maps each discovered tile to its BFS predecessor.
+    final prev = <AxialCoord, AxialCoord?>{from: null};
+    final queue = Queue<AxialCoord>()..add(from);
+
+    while (queue.isNotEmpty) {
+      final cur = queue.removeFirst();
+
+      // Any tile other than 'from' that we can reach is unvisited
+      // (BFS only traverses through validMoves which filters out visited).
+      if (cur != from) {
+        // Trace back to find the first step from 'from'.
+        var node = cur;
+        while (prev[node] != from) {
+          node = prev[node]!;
+        }
+        return node;
+      }
+
+      for (final nb in grid.validMoves(cur, visited: visited)) {
+        if (!prev.containsKey(nb)) {
+          prev[nb] = cur;
+          queue.add(nb);
+        }
+      }
+    }
+    return null; // fully trapped
+  }
+
   /// BFS reachability from [start] (wall-only, ignores visited rule).
   static Set<AxialCoord> reachableFrom(
     AxialCoord start,

@@ -8,28 +8,20 @@ import 'wall_component.dart';
 
 typedef TileCallback = void Function(AxialCoord coord);
 
-/// Manages the entire 12×12 hex grid, wall placement, and movement queries.
-///
-/// This is a plain [Component] (no own position/size) so its children's
-/// screen-space positions are used as-is.
+/// Manages a [gridCols]×[gridRows] hex grid, wall placement, and queries.
 class GridManager extends Component {
-  final int gridSize;
+  final int gridCols;
+  final int gridRows;
   final double hexRadius;
-
-  /// Pixel offset applied to every tile centre so the grid is centred on screen.
   final Vector2 gridOffset;
 
-  /// All tiles indexed by their [AxialCoord].
   final Map<AxialCoord, HexTileComponent> tiles = {};
-
-  /// Canonical wall set – each pair stored once (smaller q first, tie-break r).
   final Set<String> _walls = {};
-
-  /// Called when the player taps a tile.
   TileCallback? onTileTapped;
 
   GridManager({
-    required this.gridSize,
+    required this.gridCols,
+    required this.gridRows,
     required this.hexRadius,
     required this.gridOffset,
   });
@@ -41,11 +33,10 @@ class GridManager extends Component {
   }
 
   void _buildTiles() {
-    for (int q = 0; q < gridSize; q++) {
-      for (int r = 0; r < gridSize; r++) {
+    for (int q = 0; q < gridCols; q++) {
+      for (int r = 0; r < gridRows; r++) {
         final coord = AxialCoord(q, r);
         final center = tileCenter(coord);
-        // PositionComponent.position is top-left of bounding box.
         final topLeft = center - Vector2(hexRadius, sqrt(3) / 2 * hexRadius);
         final tile = HexTileComponent(
           coord: coord,
@@ -59,38 +50,33 @@ class GridManager extends Component {
     }
   }
 
-  // ── Coordinate conversion ──────────────────────────────────────────────────
-
-  /// Screen-space centre of the hex at [coord].
   Vector2 tileCenter(AxialCoord coord) =>
       axialToPixel(coord, hexRadius, offset: gridOffset);
 
-  // ── Wall API ───────────────────────────────────────────────────────────────
-
   void addWall(AxialCoord a, AxialCoord b) {
     _walls.add(_key(a, b));
-    final ca = tileCenter(a);
-    final cb = tileCenter(b);
-    add(WallComponent(coordA: a, coordB: b, centerA: ca, centerB: cb));
+    add(
+      WallComponent(
+        coordA: a,
+        coordB: b,
+        centerA: tileCenter(a),
+        centerB: tileCenter(b),
+      ),
+    );
   }
 
   bool isWalled(AxialCoord a, AxialCoord b) => _walls.contains(_key(a, b));
 
   String _key(AxialCoord a, AxialCoord b) {
-    // Canonical: smaller q first; tie-break by r.
     if (a.q < b.q || (a.q == b.q && a.r <= b.r)) {
       return '${a.q},${a.r}-${b.q},${b.r}';
     }
     return '${b.q},${b.r}-${a.q},${a.r}';
   }
 
-  // ── Grid queries ───────────────────────────────────────────────────────────
-
   bool isValid(AxialCoord c) =>
-      c.q >= 0 && c.q < gridSize && c.r >= 0 && c.r < gridSize;
+      c.q >= 0 && c.q < gridCols && c.r >= 0 && c.r < gridRows;
 
-  /// Returns valid moves from [from], optionally excluding [visited] tiles
-  /// (the Seeker's no-repeat rule).
   List<AxialCoord> validMoves(AxialCoord from, {Set<AxialCoord>? visited}) {
     final result = <AxialCoord>[];
     for (final nb in from.neighbours()) {
@@ -102,21 +88,23 @@ class GridManager extends Component {
     return result;
   }
 
-  // ── Tile state helpers ─────────────────────────────────────────────────────
-
   void setTileState(AxialCoord coord, TileState state) {
     tiles[coord]?.state = state;
   }
 
   TileState? getTileState(AxialCoord coord) => tiles[coord]?.state;
 
-  void setHighlighted(AxialCoord coord, bool value) {
-    tiles[coord]?.isHighlighted = value;
+  void setHighlighted(AxialCoord coord, bool value, {int heat = 0}) {
+    if (tiles.containsKey(coord)) {
+      tiles[coord]!.isHighlighted = value;
+      tiles[coord]!.highlightHeat = heat;
+    }
   }
 
   void clearAllHighlights() {
     for (final t in tiles.values) {
       t.isHighlighted = false;
+      t.highlightHeat = 0;
     }
   }
 }

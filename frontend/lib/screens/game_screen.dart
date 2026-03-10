@@ -13,6 +13,7 @@ class GameScreen extends StatefulWidget {
 
 class _GameScreenState extends State<GameScreen> {
   HideAndSeekGame? _game;
+  int _level = 1;
 
   @override
   void initState() {
@@ -24,16 +25,16 @@ class _GameScreenState extends State<GameScreen> {
     showDialog<PlayerRole>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => const _RolePickerDialog(),
+      builder: (_) => _RolePickerDialog(level: _level),
     ).then((role) {
       if (role == null || !mounted) return;
       setState(() {
-        _game = HideAndSeekGame(playerRole: role);
+        _game = HideAndSeekGame(playerRole: role, level: _level);
       });
     });
   }
 
-  // ── Overlay builders ───────────────────────────────────────────────────────
+  // ── Overlay builders ──────────────────────────────────────────────────────
   Widget _buildWinOverlay(BuildContext ctx, HideAndSeekGame game) =>
       _EndOverlay(
         title: 'YOU WIN!',
@@ -41,6 +42,8 @@ class _GameScreenState extends State<GameScreen> {
             ? 'You found the hider!'
             : 'The seeker was trapped!',
         color: const Color(0xFF00C896),
+        isWin: true,
+        onNext: _nextLevel,
         onRestart: _restart,
         onMenu: _backToMenu,
       );
@@ -52,9 +55,59 @@ class _GameScreenState extends State<GameScreen> {
             ? 'You got trapped — hider escapes!'
             : 'The seeker found you!',
         color: const Color(0xFFFF4D6A),
+        isWin: false,
+        onNext: _restart, // on loss, 'next' button = retry same level
         onRestart: _restart,
         onMenu: _backToMenu,
       );
+
+  Widget _buildPowerupsOverlay(BuildContext ctx, HideAndSeekGame game) {
+    return ValueListenableBuilder<int>(
+      valueListenable: game.powerupStateNotifier,
+      builder: (context, value, child) {
+        return SafeArea(
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 24),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                spacing: 16,
+                children: [
+                  _PowerupButton(
+                    icon: Icons.radar,
+                    label: 'SONAR',
+                    isUsed: game.usedSonar,
+                    onPressed: game.useSonar,
+                  ),
+                  _PowerupButton(
+                    icon: Icons.fast_forward,
+                    label: 'LEAP',
+                    isUsed: game.usedLeap,
+                    onPressed: game.useLeap,
+                  ),
+                  _PowerupButton(
+                    icon: Icons.bug_report,
+                    label: 'DECOYS',
+                    isUsed: game.usedDecoyScan,
+                    onPressed: game.useDecoyScan,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _nextLevel() {
+    setState(() {
+      _level++;
+      _game = null;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _showRolePicker());
+  }
 
   void _restart() {
     setState(() => _game = null);
@@ -85,6 +138,8 @@ class _GameScreenState extends State<GameScreen> {
                   _buildWinOverlay(ctx, game as HideAndSeekGame),
               HideAndSeekGame.overlayLose: (ctx, game) =>
                   _buildLoseOverlay(ctx, game as HideAndSeekGame),
+              HideAndSeekGame.overlayPowerups: (ctx, game) =>
+                  _buildPowerupsOverlay(ctx, game as HideAndSeekGame),
             },
           ),
           // Back button.
@@ -108,10 +163,13 @@ class _GameScreenState extends State<GameScreen> {
 
 // ── Role Picker Dialog ────────────────────────────────────────────────────────
 class _RolePickerDialog extends StatelessWidget {
-  const _RolePickerDialog();
+  final int level;
+  const _RolePickerDialog({required this.level});
 
   @override
   Widget build(BuildContext context) {
+    final dims = HideAndSeekGame.gridSizeForLevel(level);
+    final gridLabel = '${dims.$2}\u00d7${dims.$1} grid';
     return Dialog(
       backgroundColor: const Color(0xFF11172B),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -121,21 +179,36 @@ class _RolePickerDialog extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'CHOOSE YOUR ROLE',
+              'LEVEL $level',
               style: GoogleFonts.orbitron(
-                color: const Color(0xFFB29CFF),
-                fontSize: 15,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 2.5,
+                color: const Color(0xFF7B61FF),
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 4,
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 4),
+            Text(
+              gridLabel,
+              style: GoogleFonts.inter(color: Colors.white38, fontSize: 12),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Choose your role',
+              style: GoogleFonts.orbitron(
+                color: const Color(0xFFB29CFF),
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 2,
+              ),
+            ),
+            const SizedBox(height: 6),
             Text(
               'The other role will be controlled by AI.',
               style: GoogleFonts.inter(color: Colors.white38, fontSize: 12),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 28),
+            const SizedBox(height: 24),
             _RoleButton(
               label: 'PLAY AS HIDER',
               description: 'Hide in a safe spot before time runs out',
@@ -229,6 +302,8 @@ class _EndOverlay extends StatelessWidget {
   final String title;
   final String subtitle;
   final Color color;
+  final bool isWin;
+  final VoidCallback onNext;
   final VoidCallback onRestart;
   final VoidCallback onMenu;
 
@@ -236,6 +311,8 @@ class _EndOverlay extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.color,
+    required this.isWin,
+    required this.onNext,
     required this.onRestart,
     required this.onMenu,
   });
@@ -288,9 +365,9 @@ class _EndOverlay extends StatelessWidget {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                onPressed: onRestart,
+                onPressed: onNext,
                 child: Text(
-                  'PLAY AGAIN',
+                  isWin ? 'NEXT LEVEL' : 'TRY AGAIN',
                   style: GoogleFonts.orbitron(
                     fontWeight: FontWeight.w700,
                     letterSpacing: 2,
@@ -326,6 +403,50 @@ class _EndOverlay extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _PowerupButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool isUsed;
+  final VoidCallback onPressed;
+
+  const _PowerupButton({
+    required this.icon,
+    required this.label,
+    required this.isUsed,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        FloatingActionButton(
+          heroTag: label,
+          onPressed: isUsed ? null : onPressed,
+          backgroundColor: isUsed
+              ? const Color(0xFF333344)
+              : const Color(0xFF7B61FF),
+          foregroundColor: isUsed ? Colors.grey : Colors.white,
+          elevation: isUsed ? 0 : 4,
+          child: Icon(icon),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1,
+            fontFamily: 'monospace',
+          ),
+        ),
+      ],
     );
   }
 }

@@ -28,10 +28,11 @@ class LevelData {
 ///   Guarantees every candidate hider tile has a wall-ignoring BFS path
 ///   from the seeker start, so the player can always WIN.
 class LevelGenerator {
-  final int gridSize;
+  final int gridCols;
+  final int gridRows;
   final Random _rng;
 
-  LevelGenerator({int? seed, this.gridSize = 12})
+  LevelGenerator({int? seed, this.gridCols = 5, this.gridRows = 5})
     : _rng = Random(seed ?? DateTime.now().millisecondsSinceEpoch);
 
   // ── Public entry points ────────────────────────────────────────────────────
@@ -50,13 +51,46 @@ class LevelGenerator {
   }
 
   /// Scenario B: Player = Seeker, AI = Hider.
+  ///
+  /// Generates a structured maze in three phases:
+  ///  1. **Primary path** – a long route from seeker start to hider using
+  ///     Warnsdorff's heuristic (maximises path length, avoids early dead-ends).
+  ///  2. **Decoy branches** – short dead-end arms that branch off the primary
+  ///     path at intersections, looking like valid routes but trapping the
+  ///     player under the no-repeat rule.
+  ///  3. **Wall placement** – only edges on the primary path and decoy arms
+  ///     are opened; every other edge stays walled.
   LevelData generateForSeeker() {
-    final walls = _dfsCarve();
-    _addLoops(walls);
     final seekerStart = AxialCoord(0, 0);
-    final hiderStart = _findFarthestReachable(walls, seekerStart);
+
+    // 1. Warnsdorff DFS — find the longest reachable path.
+    final primaryPath = _buildLongPath(seekerStart);
+
+    // 2. Mark primary edges as open.
+    final openEdges = <({AxialCoord a, AxialCoord b})>{};
+    for (int i = 0; i < primaryPath.length - 1; i++) {
+      openEdges.add(_canon(primaryPath[i], primaryPath[i + 1]));
+    }
+
+    // 3. Add decoy dead-end branches.
+    final allUsed = Set<AxialCoord>.from(primaryPath);
+    _addDecoyBranches(primaryPath, allUsed, openEdges);
+
+    // 4. Punch extra loops — open ~35% of remaining closed edges
+    //    so the map isn't too maze-like and the player has more room.
+    _punchExtraLoops(openEdges, 0.35);
+
+    // 5. Pick a random tile from the far half of all accessible tiles.
+    final farTiles = allUsed.toList()
+      ..remove(seekerStart)
+      ..sort(
+        (a, b) => b.distance(seekerStart).compareTo(a.distance(seekerStart)),
+      );
+    final pool = farTiles.take(max(1, farTiles.length ~/ 2)).toList();
+    final hiderStart = pool[_rng.nextInt(pool.length)];
+
     return LevelData(
-      walls: walls,
+      walls: _wallsExcept(openEdges),
       seekerStart: seekerStart,
       hiderStart: hiderStart,
     );
@@ -69,8 +103,8 @@ class LevelGenerator {
   List<({AxialCoord a, AxialCoord b})> _dfsCarve() {
     // Collect all possible edges.
     final allEdges = <({AxialCoord a, AxialCoord b})>{};
-    for (int q = 0; q < gridSize; q++) {
-      for (int r = 0; r < gridSize; r++) {
+    for (int q = 0; q < gridCols; q++) {
+      for (int r = 0; r < gridRows; r++) {
         final c = AxialCoord(q, r);
         for (final nb in c.neighbours()) {
           if (!_valid(nb)) continue;
@@ -116,7 +150,7 @@ class LevelGenerator {
   }) {
     final wallsCopy = List.of(walls)..shuffle(_rng);
     int removed = 0;
-    final target = (walls.length * 0.18).round();
+    final target = (walls.length * 0.55).round();
 
     for (final w in wallsCopy) {
       if (removed >= target) break;
@@ -172,21 +206,149 @@ class LevelGenerator {
     }
 
     // Fallback: just pick the corner farthest from seekerStart.
-    return best ?? AxialCoord(gridSize - 1, gridSize - 1);
+    return best ?? AxialCoord(gridCols - 1, gridRows - 1);
   }
 
-  // ── Farthest reachable (Scenario B) ───────────────────────────────────────
+  // ── Scenario B: primary path + decoy branches ─────────────────────────────
 
-  AxialCoord _findFarthestReachable(
-    List<({AxialCoord a, AxialCoord b})> walls,
-    AxialCoord start,
+  /// Opens [fraction] of currently-closed edges at random, creating loops
+  /// that break the strict maze feel and give the player more space to explore.
+  void _punchExtraLoops(
+    Set<({AxialCoord a, AxialCoord b})> openEdges,
+    double fraction,
   ) {
-    final wallSet = walls.toSet();
-    final adj = _buildAdj(wallSet);
-    final reachable = _bfs(start, adj);
-    return reachable
-        .where((c) => c != start)
-        .reduce((a, b) => a.distance(start) >= b.distance(start) ? a : b);
+    final allEdges = <({AxialCoord a, AxialCoord b})>{};
+    for (int q = 0; q < gridCols; q++) {
+      for (int r = 0; r < gridRows; r++) {
+        final c = AxialCoord(q, r);
+        for (final nb in c.neighbours()) {
+          if (_valid(nb)) allEdges.add(_canon(c, nb));
+        }
+      }
+    }
+    final closed = allEdges.difference(openEdges).toList()..shuffle(_rng);
+    final toOpen = (closed.length * fraction).round();
+    for (int i = 0; i < toOpen; i++) {
+      openEdges.add(closed[i]);
+    }
+  }
+
+  /// Warnsdorff-heuristic DFS: at each step picks the neighbour with the
+  /// *fewest* onward free moves (keeps options open globally, avoids premature
+  /// dead-ends). 80 % of the time the best candidate is chosen; 20 % random
+  /// to ensure level variety across runs.
+  List<AxialCoord> _buildLongPath(AxialCoord start) {
+    final path = <AxialCoord>[start];
+    final visited = <AxialCoord>{start};
+
+    while (true) {
+      final cur = path.last;
+      final candidates = cur
+          .neighbours()
+          .where((nb) => _valid(nb) && !visited.contains(nb))
+          .toList();
+
+      if (candidates.isEmpty) break;
+
+      candidates.sort((a, b) {
+        final da = a
+            .neighbours()
+            .where((nb) => _valid(nb) && !visited.contains(nb))
+            .length;
+        final db = b
+            .neighbours()
+            .where((nb) => _valid(nb) && !visited.contains(nb))
+            .length;
+        if (da != db) return da.compareTo(db);
+        return _rng.nextBool() ? -1 : 1; // random tie-break for variety
+      });
+
+      final next = _rng.nextDouble() < 0.80
+          ? candidates.first
+          : candidates[_rng.nextInt(candidates.length)];
+      path.add(next);
+      visited.add(next);
+    }
+    return path;
+  }
+
+  /// Attaches 6 decoy dead-end branches to random nodes along [primaryPath].
+  /// Each branch is a short DFS arm that diverges from the primary route and
+  /// ends in a dead end — entering one traps the player (no-repeat rule).
+  void _addDecoyBranches(
+    List<AxialCoord> primaryPath,
+    Set<AxialCoord> allUsed,
+    Set<({AxialCoord a, AxialCoord b})> openEdges,
+  ) {
+    const targetBranches = 6;
+    const maxBranchLen = 10;
+
+    // Avoid branching from very start or very end of the primary path.
+    final midSection = primaryPath.length > 20
+        ? primaryPath.sublist(4, primaryPath.length - 4)
+        : primaryPath;
+
+    final shuffled = List<AxialCoord>.from(midSection)..shuffle(_rng);
+    int created = 0;
+
+    for (final node in shuffled) {
+      if (created >= targetBranches) break;
+      final branch = _buildBranch(node, allUsed, maxBranchLen);
+      if (branch.length < 3) continue; // too short to be a meaningful decoy
+
+      // Open the fork edge and all edges within the branch arm.
+      openEdges.add(_canon(node, branch.first));
+      for (int i = 0; i < branch.length - 1; i++) {
+        openEdges.add(_canon(branch[i], branch[i + 1]));
+      }
+      allUsed.addAll(branch);
+      created++;
+    }
+  }
+
+  /// Short DFS walk from [start] using only tiles NOT already in [used].
+  /// Returns the new tiles visited (not including [start]).
+  List<AxialCoord> _buildBranch(
+    AxialCoord start,
+    Set<AxialCoord> used,
+    int maxLen,
+  ) {
+    final branch = <AxialCoord>[];
+    final seen = <AxialCoord>{start};
+    var cur = start;
+
+    for (int i = 0; i < maxLen; i++) {
+      final candidates = cur
+          .neighbours()
+          .where((nb) => _valid(nb) && !used.contains(nb) && !seen.contains(nb))
+          .toList();
+      if (candidates.isEmpty) break;
+      candidates.shuffle(_rng);
+      cur = candidates.first;
+      branch.add(cur);
+      seen.add(cur);
+    }
+    return branch;
+  }
+
+  /// Returns a wall list covering every edge that is NOT in [openEdges].
+  /// Using a Set ensures no duplicate walls even though each edge is
+  /// encountered twice (once per endpoint).
+  List<({AxialCoord a, AxialCoord b})> _wallsExcept(
+    Set<({AxialCoord a, AxialCoord b})> openEdges,
+  ) {
+    final walls = <({AxialCoord a, AxialCoord b})>{};
+    for (int q = 0; q < gridCols; q++) {
+      for (int r = 0; r < gridRows; r++) {
+        final c = AxialCoord(q, r);
+        for (final nb in c.neighbours()) {
+          if (!_valid(nb)) continue;
+          final edge = _canon(c, nb);
+          if (!openEdges.contains(edge)) walls.add(edge);
+        }
+      }
+    }
+    return walls.toList();
   }
 
   // ── Graph helpers ──────────────────────────────────────────────────────────
@@ -267,11 +429,11 @@ class LevelGenerator {
   // ── Misc helpers ───────────────────────────────────────────────────────────
 
   bool _valid(AxialCoord c) =>
-      c.q >= 0 && c.q < gridSize && c.r >= 0 && c.r < gridSize;
+      c.q >= 0 && c.q < gridCols && c.r >= 0 && c.r < gridRows;
 
   List<AxialCoord> _allCoords() => [
-    for (int q = 0; q < gridSize; q++)
-      for (int r = 0; r < gridSize; r++) AxialCoord(q, r),
+    for (int q = 0; q < gridCols; q++)
+      for (int r = 0; r < gridRows; r++) AxialCoord(q, r),
   ];
 
   ({AxialCoord a, AxialCoord b}) _canon(AxialCoord a, AxialCoord b) {
