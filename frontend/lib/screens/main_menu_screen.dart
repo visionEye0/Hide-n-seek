@@ -2,8 +2,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../game/core/game_settings.dart';
 import 'game_screen.dart';
-import 'sprite_picker_screen.dart';
 
 class MainMenuScreen extends StatefulWidget {
   const MainMenuScreen({super.key});
@@ -76,14 +76,52 @@ class _MainMenuScreenState extends State<MainMenuScreen>
   }
 
   void _onSettings() {
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            const SpritePickerScreen(),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) =>
-            FadeTransition(opacity: animation, child: child),
-        transitionDuration: const Duration(milliseconds: 300),
-      ),
+    showDialog(
+      context: context,
+      builder: (context) {
+        return ListenableBuilder(
+          listenable: globalSettings,
+          builder: (context, _) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF1C1C2E),
+              title: Text(
+                'SETTINGS',
+                style: GoogleFonts.orbitron(
+                  color: const Color(0xFFB29CFF),
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 2,
+                ),
+              ),
+              content: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Sound Effects & Music',
+                    style: GoogleFonts.inter(color: Colors.white70),
+                  ),
+                  Switch(
+                    value: globalSettings.soundEnabled,
+                    onChanged: (_) => globalSettings.toggleSound(),
+                    activeThumbColor: const Color(0xFF7B61FF),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: Text(
+                    'CLOSE',
+                    style: GoogleFonts.orbitron(
+                      color: const Color(0xFF7B61FF),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
