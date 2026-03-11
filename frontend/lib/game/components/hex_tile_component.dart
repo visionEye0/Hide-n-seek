@@ -1,7 +1,11 @@
 import 'dart:math';
 
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:flame/components.dart';
 import 'package:flame/events.dart';
+import 'package:flame/flame.dart';
 import 'package:flutter/material.dart';
 
 import '../core/hex_coords.dart';
@@ -18,11 +22,12 @@ class HexTileComponent extends PositionComponent with TapCallbacks {
   bool isDecoyScanned;
   final void Function(AxialCoord)? onTapped;
 
-  static const Color _colUnvisited = Color(0xFF1E2244);
-  static const Color _colVisited = Color(0xFF3B1FA3);
   static const Color _colOccupied = Color(0xFF7B61FF);
   static const Color _colHighlight = Color(0xFF4A3FBF);
   static const Color _colBorder = Color(0xFF7B61FF);
+
+  late final ui.ImageShader grassShader;
+  late final ui.ImageShader steppedGrassShader;
 
   HexTileComponent({
     required this.coord,
@@ -39,38 +44,97 @@ class HexTileComponent extends PositionComponent with TapCallbacks {
   double get _hexRadius => size.x / 2;
 
   @override
+  Future<void> onLoad() async {
+    await super.onLoad();
+    final grassImage = Flame.images.fromCache('resources/grass_texture.png');
+    final steppedGrassImage = Flame.images.fromCache(
+      'resources/stepped_grass_texture.png',
+    );
+
+    final matrix = Float64List.fromList([
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+      0.0,
+      0.0,
+      0.0,
+      0.0,
+      1.0,
+    ]);
+
+    grassShader = ui.ImageShader(
+      grassImage,
+      ui.TileMode.repeated,
+      ui.TileMode.repeated,
+      matrix,
+    );
+
+    steppedGrassShader = ui.ImageShader(
+      steppedGrassImage,
+      ui.TileMode.repeated,
+      ui.TileMode.repeated,
+      matrix,
+    );
+  }
+
+  @override
   void render(Canvas canvas) {
     final path = _buildPath();
 
-    Color fill;
     if (state == TileState.visited) {
-      fill = isHighlighted ? const Color(0xFF4A2FC0) : _colVisited;
+      canvas.drawPath(path, Paint()..shader = steppedGrassShader);
+    } else {
+      canvas.drawPath(path, Paint()..shader = grassShader);
+    }
+
+    Color? overlayColor;
+    if (state == TileState.visited) {
+      if (isHighlighted) {
+        overlayColor = const Color(0xFF4A2FC0).withValues(alpha: 0.6);
+      }
     } else if (state == TileState.occupied) {
-      fill = _colOccupied;
+      overlayColor = _colOccupied.withValues(alpha: 0.4);
     } else {
       if (isHighlighted) {
         if (highlightHeat >= 3) {
-          fill = const Color(0xFFFFAA99); // adjacent (bright peach/red)
+          overlayColor = const Color(
+            0xFFFFAA99,
+          ).withValues(alpha: 0.6); // adjacent
         } else if (highlightHeat == 2) {
-          fill = const Color(0xFFC4718D); // 2 steps (warm purple/orange)
+          overlayColor = const Color(
+            0xFFC4718D,
+          ).withValues(alpha: 0.6); // 2 steps
         } else if (highlightHeat == 1) {
-          fill = const Color(0xFF8152A3); // 3 steps (warm blue)
+          overlayColor = const Color(
+            0xFF8152A3,
+          ).withValues(alpha: 0.6); // 3 steps
         } else {
-          fill = _colHighlight;
+          overlayColor = _colHighlight.withValues(alpha: 0.6);
         }
-      } else {
-        fill = _colUnvisited;
       }
     }
 
-    canvas.drawPath(path, Paint()..color = fill);
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = _colBorder.withValues(alpha: 0.45)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.2,
-    );
+    if (overlayColor != null) {
+      canvas.drawPath(path, Paint()..color = overlayColor);
+    }
+
+    if (state != TileState.visited) {
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = _colBorder.withValues(alpha: 0.45)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2,
+      );
+    }
 
     if (isSonarPinged) {
       canvas.drawPath(

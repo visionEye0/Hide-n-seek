@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'game_screen.dart';
+import 'sprite_picker_screen.dart';
 
 class MainMenuScreen extends StatefulWidget {
   const MainMenuScreen({super.key});
@@ -75,15 +76,13 @@ class _MainMenuScreenState extends State<MainMenuScreen>
   }
 
   void _onSettings() {
-    // TODO: Navigate to Settings screen
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        backgroundColor: const Color(0xFF1C1C2E),
-        content: Text(
-          'Settings coming soon!',
-          style: GoogleFonts.inter(color: Colors.white70),
-        ),
-        duration: const Duration(seconds: 2),
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const SpritePickerScreen(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) =>
+            FadeTransition(opacity: animation, child: child),
+        transitionDuration: const Duration(milliseconds: 300),
       ),
     );
   }
