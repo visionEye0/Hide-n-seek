@@ -1,4 +1,8 @@
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:flame/components.dart';
+import 'package:flame/flame.dart';
 import 'package:flutter/material.dart';
 
 import '../core/hex_coords.dart';
@@ -13,12 +17,43 @@ class WallComponent extends Component {
   final Vector2 centerA;
   final Vector2 centerB;
 
+  late final ui.ImageShader wallShader;
+
   WallComponent({
     required this.coordA,
     required this.coordB,
     required this.centerA,
     required this.centerB,
   });
+
+  @override
+  Future<void> onLoad() async {
+    await super.onLoad();
+    final wallImage = Flame.images.fromCache('resources/wall_texture.png');
+    wallShader = ui.ImageShader(
+      wallImage,
+      ui.TileMode.repeated,
+      ui.TileMode.repeated,
+      Float64List.fromList([
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+      ]),
+    );
+  }
 
   @override
   void render(Canvas canvas) {
@@ -34,9 +69,9 @@ class WallComponent extends Component {
       Offset(start.x, start.y),
       Offset(end.x, end.y),
       Paint()
-        ..color = const Color(0xFFFF4D6A)
-        ..strokeWidth = 3.5
-        ..strokeCap = StrokeCap.round,
+        ..shader = wallShader
+        ..strokeWidth = 12.0
+        ..strokeCap = StrokeCap.square,
     );
   }
 }

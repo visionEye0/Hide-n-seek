@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'game/components/player_sprite_config.dart';
 import 'screens/splash_screen.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  globalSpriteConfig = await PlayerSpriteConfig.load();
   runApp(const HideNSeekApp());
 }
 

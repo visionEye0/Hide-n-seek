@@ -1,25 +1,92 @@
+import 'dart:ui' as ui;
+
 import 'package:flame/components.dart';
+import 'package:flame/flame.dart';
 import 'package:flutter/material.dart';
 
 import '../core/hex_coords.dart';
+import 'player_sprite_config.dart';
 
 enum PlayerType { hider, seeker }
 
-/// An animated circular avatar for the Hider or Seeker.
+// ─── Hex-direction → MoveDir mapping ─────────────────────────────────────────
+//
+//  Flat-top hex grid axial neighbour directions:
+//   (dq, dr)  → compass bearing (screen-space, y grows down)
+//   ( 1,  0)  → East    = MoveDir.right
+//   ( 1, -1)  → NE      = MoveDir.upRight
+//   ( 0, -1)  → NW      = MoveDir.upLeft
+//   (-1,  0)  → West    = MoveDir.left
+//   (-1,  1)  → SW      = MoveDir.downLeft
+//   ( 0,  1)  → SE      = MoveDir.downRight
+//
+MoveDir _hexDeltaToDir(AxialCoord from, AxialCoord to) {
+  final dq = to.q - from.q;
+  final dr = to.r - from.r;
+
+  if (dq == 1 && dr == 0) return MoveDir.downRight;
+  if (dq == 1 && dr == -1) return MoveDir.upRight;
+  if (dq == 0 && dr == -1) return MoveDir.up;
+  if (dq == -1 && dr == 0) return MoveDir.upLeft;
+  if (dq == -1 && dr == 1) return MoveDir.downLeft;
+  if (dq == 0 && dr == 1) return MoveDir.down;
+
+  // fallback for multi-step moves (leap)
+  final deltaPixel = axialToPixel(AxialCoord(dq, dr), 1.0);
+  return _pixelDeltaToDir(deltaPixel);
+}
+
+MoveDir _pixelDeltaToDir(Vector2 delta) {
+  final len = delta.length;
+  if (len < 0.01) return MoveDir.idle;
+
+  final nx = delta.x / len;
+  final ny = delta.y / len;
+
+  // Mostly vertical movement -> Up or Down
+  if (nx.abs() < 0.5) {
+    return ny > 0 ? MoveDir.down : MoveDir.up;
+  }
+
+  // Horizontal + Vertical movement -> Diagonals
+  if (nx > 0) {
+    return ny > 0 ? MoveDir.downRight : MoveDir.upRight;
+  } else {
+    return ny > 0 ? MoveDir.downLeft : MoveDir.upLeft;
+  }
+}
+
+// ─── Animation constants ──────────────────────────────────────────────────────
+const double _cellW = 16.0;
+const double _cellH = 24.0;
+const int _framesPerAnim =
+    3; // 3 animation frames vertically per character block
+const double _frameDuration = 0.12; // seconds per frame
+
+/// An animated sprite avatar for the Hider or Seeker.
+///
+/// On each move the direction is derived from the hex coordinate delta and the
+/// matching sprite frame (from [globalSpriteConfig]) is played as a 4-frame
+/// walk cycle. When idle the character shows the configured idle frame.
 ///
 /// [renderOpacity] controls alpha:
-///   1.0 = fully visible, 0.3 = 70% transparent (hider after hiding phase
-///   from the player's own perspective), 0.0 = fully invisible (hider hidden
-///   from the opposing player).
+///   1.0 = fully visible, 0.3 = 70% transparent (hider after hiding phase),
+///   0.0 = fully invisible.
 class PlayerComponent extends PositionComponent {
   PlayerType type;
   AxialCoord currentCoord;
 
-  /// 0.0 = invisible  /  0.3 = 70% transparent  /  1.0 = fully visible.
   double renderOpacity;
 
   Vector2? _targetPos;
-  static const double _speed = 280.0; // px / s
+  static const double _speed = 280.0;
+
+  // ── Animation state ────────────────────────────────────────────────────────
+  MoveDir _facing = MoveDir.idle;
+  int _frameIndex = 0;
+  double _frameTimer = 0;
+
+  late final ui.Image _sheet;
 
   PlayerComponent({
     required this.type,
@@ -30,6 +97,16 @@ class PlayerComponent extends PositionComponent {
   }) : super(size: Vector2.all(hexRadius * 1.6));
 
   bool get isHider => type == PlayerType.hider;
+  CharSpriteConfig get _charConfig =>
+      isHider ? globalSpriteConfig.hider : globalSpriteConfig.seeker;
+
+  @override
+  Future<void> onLoad() async {
+    await super.onLoad();
+    _sheet = Flame.images.fromCache(
+      'resources/Small-8-Direction-Characters_by_AxulArt.png',
+    );
+  }
 
   @override
   void update(double dt) {
@@ -37,26 +114,44 @@ class PlayerComponent extends PositionComponent {
       final dir = _targetPos! - position;
       final dist = dir.length;
       final step = _speed * dt;
+
+      // Advance animation frames while moving.
+      _frameTimer += dt;
+      if (_frameTimer >= _frameDuration) {
+        _frameTimer -= _frameDuration;
+        _frameIndex = (_frameIndex + 1) % _framesPerAnim;
+      }
+
       if (step >= dist) {
         position.setFrom(_targetPos!);
         _targetPos = null;
+        _frameIndex = 0;
+        _frameTimer = 0;
+        _facing = MoveDir.idle;
       } else {
         position.addScaled(dir.normalized(), step);
       }
     }
   }
 
-  /// Move the player to [worldPos] with a smooth animation.
+  /// Move the player to [worldPos] with a smooth walk animation.
+  /// [newCoord] is the destination hex — used to determine the exact direction.
   void moveTo(Vector2 worldPos, AxialCoord newCoord) {
+    _facing = _hexDeltaToDir(currentCoord, newCoord);
     _targetPos = worldPos.clone();
     currentCoord = newCoord;
+    _frameIndex = 0;
+    _frameTimer = 0;
   }
 
   /// Instantly teleport the player to [worldPos] (no animation).
   void teleportTo(Vector2 worldPos, AxialCoord newCoord) {
+    _facing = MoveDir.idle;
     _targetPos = null;
     position.setFrom(worldPos);
     currentCoord = newCoord;
+    _frameIndex = 0;
+    _frameTimer = 0;
   }
 
   bool get isMoving => _targetPos != null;
@@ -65,7 +160,6 @@ class PlayerComponent extends PositionComponent {
   void render(Canvas canvas) {
     if (renderOpacity <= 0.01) return;
 
-    // Wrap the whole draw in a saveLayer so renderOpacity applies uniformly.
     final bounds = Rect.fromLTWH(0, 0, size.x, size.y);
     if (renderOpacity < 0.99) {
       canvas.saveLayer(
@@ -80,56 +174,57 @@ class PlayerComponent extends PositionComponent {
   }
 
   void _drawAvatar(Canvas canvas) {
-    final cx = size.x / 2;
-    final cy = size.y / 2;
-    final r = size.x * 0.42;
+    final spriteHeight = size.y;
+    final spriteWidth = spriteHeight * (_cellW / _cellH);
+    final left = (size.x - spriteWidth) / 2;
 
-    // Drop shadow.
-    canvas.drawCircle(
-      Offset(cx, cy + 2),
-      r,
+    // Drop shadow
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(size.x / 2, size.y - 2),
+        width: spriteWidth * 0.8,
+        height: size.y * 0.25,
+      ),
       Paint()..color = Colors.black.withValues(alpha: 0.28),
     );
 
-    // Body.
-    final bodyColor = isHider
-        ? const Color(0xFF00C896)
-        : const Color(0xFFFF6B35);
-    canvas.drawCircle(Offset(cx, cy), r, Paint()..color = bodyColor);
+    // Look up the configured frame for the current facing direction.
+    final frame = _charConfig.frameFor(_facing);
 
-    // White ring.
-    canvas.drawCircle(
-      Offset(cx, cy),
-      r,
-      Paint()
-        ..color = Colors.white.withValues(alpha: 0.55)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.0,
+    // To prevent walking out of the character's animation block if the user
+    // selects the bottom frame of a cycle, we calculate the base row block
+    // (White=1, Blue=5, Orange=9) based on what row they tapped.
+    int baseRow = frame.row;
+    if (baseRow >= 1 && baseRow <= 3) {
+      baseRow = 1;
+    } else if (baseRow >= 5 && baseRow <= 7) {
+      baseRow = 5;
+    } else if (baseRow >= 9 && baseRow <= 11) {
+      baseRow = 9;
+    }
+
+    // Animate through rows 0-2 for the walk cycle (the sheet stores walk frames vertically).
+    // Idle just shows the base frame (animRowOffset = 0).
+    final animRowOffset = isMoving ? _frameIndex : 0;
+    final srcX = frame.col * _cellW;
+    final srcY = (baseRow + animRowOffset) * _cellH;
+    final src = Rect.fromLTWH(srcX, srcY, _cellW, _cellH);
+    final dst = Rect.fromLTWH(left, 0, spriteWidth, spriteHeight);
+
+    if (frame.flip) {
+      canvas.save();
+      canvas.translate(left + spriteWidth / 2, 0);
+      canvas.scale(-1, 1);
+      canvas.translate(-(left + spriteWidth / 2), 0);
+    }
+
+    canvas.drawImageRect(
+      _sheet,
+      src,
+      dst,
+      Paint()..filterQuality = FilterQuality.none,
     );
 
-    // Inner icon (square for hider, diamond for seeker).
-    final iconSize = r * 0.55;
-    final iconPaint = Paint()..color = Colors.white.withValues(alpha: 0.85);
-    if (isHider) {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromCenter(
-            center: Offset(cx, cy),
-            width: iconSize,
-            height: iconSize,
-          ),
-          const Radius.circular(2),
-        ),
-        iconPaint,
-      );
-    } else {
-      final path = Path()
-        ..moveTo(cx, cy - iconSize * 0.7)
-        ..lineTo(cx + iconSize * 0.6, cy)
-        ..lineTo(cx, cy + iconSize * 0.7)
-        ..lineTo(cx - iconSize * 0.6, cy)
-        ..close();
-      canvas.drawPath(path, iconPaint);
-    }
+    if (frame.flip) canvas.restore();
   }
 }

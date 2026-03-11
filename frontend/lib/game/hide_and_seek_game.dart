@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flame/components.dart';
+import 'package:flame/flame.dart';
 import 'package:flame/game.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -65,6 +66,14 @@ class HideAndSeekGame extends FlameGame {
   @override
   Future<void> onLoad() async {
     await super.onLoad();
+
+    Flame.images.prefix = '';
+    await Flame.images.loadAll([
+      'resources/grass_texture.png',
+      'resources/stepped_grass_texture.png',
+      'resources/wall_texture.png',
+      'resources/Small-8-Direction-Characters_by_AxulArt.png',
+    ]);
 
     final gridDims = gridSizeForLevel(level);
     _gridCols = gridDims.$1;
@@ -369,13 +378,8 @@ class HideAndSeekGame extends FlameGame {
   // ── Highlight valid moves ─────────────────────────────────────────────────
   void _updateHintHighlights() {
     if (_phase == GamePhase.hiding && playerRole == PlayerRole.hider) {
-      // All tiles are valid teleport targets — highlight everything except
-      // the hider's current tile.
-      for (final coord in _grid.tiles.keys) {
-        if (coord != _hider.currentCoord) {
-          _grid.setHighlighted(coord, true);
-        }
-      }
+      // Intentionally intentionally doing nothing here to remove the blue overlay.
+      // The user can still tap any tile to hide there.
     } else if (_phase == GamePhase.seeking && playerRole == PlayerRole.seeker) {
       if (_isLeapModeActive) {
         for (final c in _grid.tiles.keys) {
