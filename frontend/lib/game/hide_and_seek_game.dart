@@ -12,7 +12,8 @@ import 'components/player_component.dart';
 import 'core/game_state.dart';
 import 'core/hex_coords.dart';
 import 'utils/level_generator.dart';
-import 'utils/pathfinder.dart';
+import 'package:flame_audio/flame_audio.dart';
+import 'core/game_settings.dart';
 
 export 'core/game_state.dart';
 
@@ -46,14 +47,14 @@ class HideAndSeekGame extends FlameGame {
   // ── Constants ─────────────────────────────────────────────────────────────
   static const String overlayWin = 'winOverlay';
   static const String overlayLose = 'loseOverlay';
-  static const String overlayPowerups = 'powerupsOverlay';
+  static const String overlayStepBack = 'stepBackOverlay';
 
-  // ── Power-Ups ─────────────────────────────────────────────────────────────
-  bool usedSonar = false;
-  bool usedLeap = false;
-  bool usedDecoyScan = false;
-  final ValueNotifier<int> powerupStateNotifier = ValueNotifier(0);
-  bool _isLeapModeActive = false;
+  // ── Travel History ────────────────────────────────────────────────────────
+  final List<AxialCoord> _seekerHistory = [];
+  final ValueNotifier<int> historyStateNotifier = ValueNotifier(0);
+
+  // ── Audio ─────────────────────────────────────────────────────────────────
+  AudioPlayer? _bgmPlayer;
 
   /// Returns (cols, rows) for a given level.
   ///  Level 1 → 3×3,  Level 2 → 3×4,  Level 3 → 4×4,
@@ -74,6 +75,10 @@ class HideAndSeekGame extends FlameGame {
       'resources/wall_texture.png',
       'resources/Small-8-Direction-Characters_by_AxulArt.png',
     ]);
+    await FlameAudio.audioCache.loadAll(['bgm.wav', 'step.wav']);
+
+    globalSettings.addListener(_onSettingsChanged);
+    _onSettingsChanged();
 
     final gridDims = gridSizeForLevel(level);
     _gridCols = gridDims.$1;
@@ -195,7 +200,7 @@ class HideAndSeekGame extends FlameGame {
     if (playerRole == PlayerRole.seeker) {
       // Player is seeking — hider is completely invisible (0% opacity).
       _hider.renderOpacity = 0.0;
-      overlays.add(overlayPowerups);
+      overlays.add(overlayStepBack);
     } else {
       // Player is hiding — show their own sprite at 70% transparent so they
       // can remember where they hid, but the AI seeker has no visual.
@@ -245,18 +250,6 @@ class HideAndSeekGame extends FlameGame {
   void _tryMoveSeeker(AxialCoord target) {
     if (_seeker.isMoving) return;
 
-    if (_isLeapModeActive) {
-      final dist = target.distance(_seeker.currentCoord);
-      if (dist > 0 &&
-          dist <= 2 &&
-          !_visited.contains(target) &&
-          _grid.isValid(target)) {
-        _isLeapModeActive = false;
-        _moveSeeker(target);
-      }
-      return;
-    }
-
     final moves = _grid.validMoves(_seeker.currentCoord, visited: _visited);
     if (!moves.contains(target)) return;
     _moveSeeker(target);
@@ -265,6 +258,10 @@ class HideAndSeekGame extends FlameGame {
   // ── Movement helpers ──────────────────────────────────────────────────────
   void _moveSeeker(AxialCoord next) {
     final prev = _seeker.currentCoord;
+
+    // Record history
+    _seekerHistory.add(prev);
+    historyStateNotifier.value++;
 
     // Mark previous tile visited.
     _visited.add(prev);
@@ -316,63 +313,43 @@ class HideAndSeekGame extends FlameGame {
         (result == GamePhase.seekerWins && playerRole == PlayerRole.seeker) ||
         (result == GamePhase.hiderWins && playerRole == PlayerRole.hider);
 
+    if (isPlayerWin) {
+      globalSettings.incrementStepBacks();
+    } else {
+      globalSettings.resetStepBacks();
+    }
+
     overlays.add(isPlayerWin ? overlayWin : overlayLose);
   }
 
-  // ── Power-Up Actions ──────────────────────────────────────────────────────
-  void useSonar() {
-    if (usedSonar || _phase != GamePhase.seeking) return;
-    usedSonar = true;
-    powerupStateNotifier.value++;
-
-    final hiderPos = _hider.currentCoord;
-    for (final t in _grid.tiles.values) {
-      if (t.coord.distance(hiderPos) <= 4) {
-        t.isSonarPinged = true;
-      }
+  // ── Step Back Action ──────────────────────────────────────────────────────
+  void stepBack() {
+    if (_seekerHistory.isEmpty ||
+        _phase != GamePhase.seeking ||
+        globalSettings.availableStepBacks <= 0) {
+      return;
     }
 
-    Future.delayed(const Duration(seconds: 2), () {
-      if (!isMounted) return;
-      for (final t in _grid.tiles.values) {
-        t.isSonarPinged = false;
-      }
-    });
-  }
+    globalSettings.decrementStepBacks();
 
-  void useLeap() {
-    if (usedLeap || _phase != GamePhase.seeking) return;
-    usedLeap = true;
-    _isLeapModeActive = true;
-    powerupStateNotifier.value++;
-    _updateHintHighlights();
-  }
+    // The tile we are currently standing on needs to be cleared
+    final currentPos = _seeker.currentCoord;
+    _grid.setTileState(currentPos, TileState.unvisited);
 
-  void useDecoyScan() {
-    if (usedDecoyScan || _phase != GamePhase.seeking) return;
-    usedDecoyScan = true;
-    powerupStateNotifier.value++;
+    // Pop the previous position and move the seeker back
+    final prevPos = _seekerHistory.removeLast();
+    _visited.remove(prevPos);
+    _grid.setTileState(prevPos, TileState.occupied);
 
-    final winningPath = HexPathfinder.findPath(
-      from: _seeker.currentCoord,
-      to: _hider.currentCoord,
-      visited: _visited,
-      grid: _grid,
+    _seeker.teleportTo(
+      _grid.tileCenter(prevPos) - Vector2(_hexRadius * 0.8, _hexRadius * 0.8),
+      prevPos,
     );
-    final winSet = winningPath?.toSet() ?? {};
 
-    for (final t in _grid.tiles.values) {
-      if (t.state != TileState.visited && !winSet.contains(t.coord)) {
-        t.isDecoyScanned = true;
-      }
-    }
+    historyStateNotifier.value++;
 
-    Future.delayed(const Duration(seconds: 3), () {
-      if (!isMounted) return;
-      for (final t in _grid.tiles.values) {
-        t.isDecoyScanned = false;
-      }
-    });
+    _grid.clearAllHighlights();
+    _updateHintHighlights();
   }
 
   // ── Highlight valid moves ─────────────────────────────────────────────────
@@ -381,34 +358,21 @@ class HideAndSeekGame extends FlameGame {
       // Intentionally intentionally doing nothing here to remove the blue overlay.
       // The user can still tap any tile to hide there.
     } else if (_phase == GamePhase.seeking && playerRole == PlayerRole.seeker) {
-      if (_isLeapModeActive) {
-        for (final c in _grid.tiles.keys) {
-          final dist = c.distance(_seeker.currentCoord);
-          if (dist > 0 && dist <= 2 && !_visited.contains(c)) {
-            _grid.setHighlighted(
-              c,
-              true,
-              heat: c.distance(_hider.currentCoord) <= 2 ? 2 : 0,
-            );
-          }
+      for (final c in _grid.validMoves(
+        _seeker.currentCoord,
+        visited: _visited,
+      )) {
+        final dist = c.distance(_hider.currentCoord);
+        int heat = 0;
+        if (dist <= 1) {
+          heat = 3;
+        } else if (dist == 2) {
+          heat = 2;
+        } else if (dist == 3) {
+          heat = 1;
         }
-      } else {
-        for (final c in _grid.validMoves(
-          _seeker.currentCoord,
-          visited: _visited,
-        )) {
-          final dist = c.distance(_hider.currentCoord);
-          int heat = 0;
-          if (dist <= 1) {
-            heat = 3;
-          } else if (dist == 2) {
-            heat = 2;
-          } else if (dist == 3) {
-            heat = 1;
-          }
 
-          _grid.setHighlighted(c, true, heat: heat);
-        }
+        _grid.setHighlighted(c, true, heat: heat);
       }
     }
   }
@@ -457,5 +421,25 @@ class HideAndSeekGame extends FlameGame {
     final center = _grid.tileCenter(coord);
     final playerR = r * 0.8;
     return center - Vector2(playerR, playerR);
+  }
+
+  void _onSettingsChanged() {
+    if (globalSettings.soundEnabled) {
+      if (_bgmPlayer == null || _bgmPlayer!.state != PlayerState.playing) {
+        FlameAudio.loopLongAudio('bgm.wav', volume: 0.3).then((player) {
+          _bgmPlayer = player;
+        });
+      }
+    } else {
+      _bgmPlayer?.stop();
+    }
+  }
+
+  @override
+  void onRemove() {
+    globalSettings.removeListener(_onSettingsChanged);
+    _bgmPlayer?.stop();
+    _bgmPlayer?.dispose();
+    super.onRemove();
   }
 }

@@ -18,8 +18,6 @@ class HexTileComponent extends PositionComponent with TapCallbacks {
   TileState state;
   bool isHighlighted; // hover / valid-move highlight
   int highlightHeat; // 0=far, 1=warm, 2=hot, 3=adjacent
-  bool isSonarPinged;
-  bool isDecoyScanned;
   final void Function(AxialCoord)? onTapped;
 
   static const Color _colOccupied = Color(0xFF7B61FF);
@@ -36,8 +34,6 @@ class HexTileComponent extends PositionComponent with TapCallbacks {
     this.state = TileState.unvisited,
     this.isHighlighted = false,
     this.highlightHeat = 0,
-    this.isSonarPinged = false,
-    this.isDecoyScanned = false,
     this.onTapped,
   }) : super(size: Vector2(hexRadius * 2, sqrt(3) * hexRadius));
 
@@ -133,22 +129,6 @@ class HexTileComponent extends PositionComponent with TapCallbacks {
           ..color = _colBorder.withValues(alpha: 0.45)
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.2,
-      );
-    }
-
-    if (isSonarPinged) {
-      canvas.drawPath(
-        path,
-        Paint()..color = const Color(0xFF00FFC8).withValues(alpha: 0.35),
-      );
-    }
-
-    if (isDecoyScanned) {
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = const Color(0xFFFF2244).withValues(alpha: 0.45)
-          ..style = PaintingStyle.fill,
       );
     }
   }

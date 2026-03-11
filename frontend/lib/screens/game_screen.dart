@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../game/hide_and_seek_game.dart';
+import '../game/core/game_settings.dart';
 
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key});
@@ -61,41 +62,52 @@ class _GameScreenState extends State<GameScreen> {
         onMenu: _backToMenu,
       );
 
-  Widget _buildPowerupsOverlay(BuildContext ctx, HideAndSeekGame game) {
-    return ValueListenableBuilder<int>(
-      valueListenable: game.powerupStateNotifier,
-      builder: (context, value, child) {
-        return SafeArea(
-          child: Align(
-            alignment: Alignment.bottomCenter,
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 24),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                spacing: 16,
-                children: [
-                  _PowerupButton(
-                    icon: Icons.radar,
-                    label: 'SONAR',
-                    isUsed: game.usedSonar,
-                    onPressed: game.useSonar,
+  Widget _buildStepBackOverlay(BuildContext ctx, HideAndSeekGame game) {
+    return ListenableBuilder(
+      listenable: globalSettings,
+      builder: (context, _) {
+        return ValueListenableBuilder<int>(
+          valueListenable: game.historyStateNotifier,
+          builder: (context, historyCount, child) {
+            final availableCount = globalSettings.availableStepBacks;
+            // The button is inactive if the player has 0 charges or hasn't made any moves to step back from
+            final isActive = availableCount > 0 && historyCount > 0;
+
+            return SafeArea(
+              child: Align(
+                alignment: Alignment.bottomRight,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 24, right: 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      FloatingActionButton(
+                        heroTag: 'step_back',
+                        onPressed: isActive ? game.stepBack : null,
+                        backgroundColor: isActive
+                            ? const Color(0xFF7B61FF)
+                            : const Color(0xFF333344),
+                        foregroundColor: isActive ? Colors.white : Colors.grey,
+                        elevation: isActive ? 4 : 0,
+                        child: const Icon(Icons.undo_rounded),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'STEP BACK ($availableCount)',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                    ],
                   ),
-                  _PowerupButton(
-                    icon: Icons.fast_forward,
-                    label: 'LEAP',
-                    isUsed: game.usedLeap,
-                    onPressed: game.useLeap,
-                  ),
-                  _PowerupButton(
-                    icon: Icons.bug_report,
-                    label: 'DECOYS',
-                    isUsed: game.usedDecoyScan,
-                    onPressed: game.useDecoyScan,
-                  ),
-                ],
+                ),
               ),
-            ),
-          ),
+            );
+          },
         );
       },
     );
@@ -138,8 +150,8 @@ class _GameScreenState extends State<GameScreen> {
                   _buildWinOverlay(ctx, game as HideAndSeekGame),
               HideAndSeekGame.overlayLose: (ctx, game) =>
                   _buildLoseOverlay(ctx, game as HideAndSeekGame),
-              HideAndSeekGame.overlayPowerups: (ctx, game) =>
-                  _buildPowerupsOverlay(ctx, game as HideAndSeekGame),
+              HideAndSeekGame.overlayStepBack: (ctx, game) =>
+                  _buildStepBackOverlay(ctx, game as HideAndSeekGame),
             },
           ),
           // Back button.
@@ -403,50 +415,6 @@ class _EndOverlay extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _PowerupButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool isUsed;
-  final VoidCallback onPressed;
-
-  const _PowerupButton({
-    required this.icon,
-    required this.label,
-    required this.isUsed,
-    required this.onPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        FloatingActionButton(
-          heroTag: label,
-          onPressed: isUsed ? null : onPressed,
-          backgroundColor: isUsed
-              ? const Color(0xFF333344)
-              : const Color(0xFF7B61FF),
-          foregroundColor: isUsed ? Colors.grey : Colors.white,
-          elevation: isUsed ? 0 : 4,
-          child: Icon(icon),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          label,
-          style: const TextStyle(
-            color: Colors.white70,
-            fontSize: 10,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1,
-            fontFamily: 'monospace',
-          ),
-        ),
-      ],
     );
   }
 }

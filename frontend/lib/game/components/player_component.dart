@@ -5,6 +5,8 @@ import 'package:flame/flame.dart';
 import 'package:flutter/material.dart';
 
 import '../core/hex_coords.dart';
+import '../core/game_settings.dart';
+import 'package:flame_audio/flame_audio.dart';
 import 'player_sprite_config.dart';
 
 enum PlayerType { hider, seeker }
@@ -142,6 +144,10 @@ class PlayerComponent extends PositionComponent {
     currentCoord = newCoord;
     _frameIndex = 0;
     _frameTimer = 0;
+
+    if (globalSettings.soundEnabled) {
+      FlameAudio.play('step.wav', volume: 0.4);
+    }
   }
 
   /// Instantly teleport the player to [worldPos] (no animation).
